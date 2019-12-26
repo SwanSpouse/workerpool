@@ -152,6 +152,8 @@ Loop: // 记住这里是Loop
 		// tasks as workers become available, and place new incoming tasks on
 		// the queue.  Once the queue is empty, then go back to submitting
 		// incoming tasks directly to available workers.
+		// 只要waiting queue里面有task，每当worker空闲下来的时候就去执行这些task
+		// 同时把新来的task塞到waitingQueue里面。
 		if p.waitingQueue.Len() != 0 {
 			select {
 			case task, ok = <-p.taskQueue:
@@ -162,11 +164,15 @@ Loop: // 记住这里是Loop
 					wait = true
 					break Loop
 				}
+				// 把task塞到waiting queue里面等待执行
 				p.waitingQueue.PushBack(task)
 			case workerTaskChan = <-p.readyWorkers:
 				// A worker is ready, so give task to worker.
+				// 有worker腾出时间来处理任务；把队列最前面的func交给它
 				workerTaskChan <- p.waitingQueue.PopFront().(func())
 			}
+			// 这里不太理解为啥要维护一个waiting这样一个数字呢？用的时候直接拿不是更好
+			// 维护这个数字的成本不高，但是用的时候直接拿会有并发的问题？
 			atomic.StoreInt32(&p.waiting, int32(p.waitingQueue.Len()))
 			continue
 		}
@@ -269,6 +275,10 @@ Loop: // 记住这里是Loop
 // channel from the readyWorkers channel, and writes a task to the worker over
 // the worker's task channel.  To stop a worker, the dispatcher closes a
 // worker's task channel, instead of writing a task to it.
+// 这个方法的精髓；startReady readyWorkers 这俩是放队列的队列；也就是这俩其实是放的worker
+// startReady表明启动成功，准备好接收第一个task
+// 执行完任务之后，将自己的taskChan交给readyWorkers；表明自己已经做好准备接收以一波任务
+// TODO @limingji 这俩chan chan fun()有没有机会整合成为一个
 func startWorker(startReady, readyWorkers chan chan func()) {
 	go func() {
 		taskChan := make(chan func())
