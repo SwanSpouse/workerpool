@@ -326,6 +326,7 @@ func TestStopWait(t *testing.T) {
 		t.Error("should have zero workers after stopwait")
 	}
 
+	// TODO @limingji 拼写错了
 	// Check that calling StopWait() againg is OK.
 	wp.StopWait()
 }
