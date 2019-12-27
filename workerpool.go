@@ -142,35 +142,37 @@ Loop:
 		// tasks as workers become available, and place new incoming tasks on
 		// the queue.  Once the queue is empty, then go back to submitting
 		// incoming tasks directly to available workers.
-		if p.waitingQueue.Len() != 0 {
-			select {
-			case task, ok = <-p.taskQueue:
-				if !ok {
-					break Loop
-				}
-				if task == nil {
-					wait = true
-					break Loop
-				}
-				p.waitingQueue.PushBack(task)
-			case workerTaskChan = <-p.readyWorkers:
-				// A worker is ready, so give task to worker.
-				workerTaskChan <- p.waitingQueue.PopFront().(func())
-			}
-			atomic.StoreInt32(&p.waiting, int32(p.waitingQueue.Len()))
-			continue
-		}
+		//if p.waitingQueue.Len() != 0 {
+		//	select {
+		//	case task, ok = <-p.taskQueue:
+		//		if !ok {
+		//			break Loop
+		//		}
+		//		if task == nil {
+		//			wait = true
+		//			break Loop
+		//		}
+		//		p.waitingQueue.PushBack(task)
+		//	case workerTaskChan = <-p.readyWorkers:
+		//		// A worker is ready, so give task to worker.
+		//		workerTaskChan <- p.waitingQueue.PopFront().(func())
+		//	}
+		//	atomic.StoreInt32(&p.waiting, int32(p.waitingQueue.Len()))
+		//	continue
+		//}
 		timeout.Reset(p.timeout)
 		select {
 		case task, ok = <-p.taskQueue:
 			if !ok || task == nil {
 				break Loop
 			}
+			// 来了之后先放入到waitingQueue里面
+			p.waitingQueue.PushBack(task)
 			// Got a task to do.
 			select {
 			case workerTaskChan = <-p.readyWorkers:
 				// A worker is ready, so give task to worker.
-				workerTaskChan <- task
+				workerTaskChan <- p.waitingQueue.PopFront().(func())
 			default:
 				// No workers ready.
 				// Create a new worker, if not at max.
@@ -181,13 +183,11 @@ Loop:
 						// Submit the task when the new worker.
 						taskChan := <-startReady
 						taskChan <- t
-					}(task)
-				} else {
-					// Enqueue task to be executed by next available worker.
-					p.waitingQueue.PushBack(task)
-					atomic.StoreInt32(&p.waiting, int32(p.waitingQueue.Len()))
+					}(p.waitingQueue.PopFront().(func()))
 				}
 			}
+			// 重新计算长度
+			atomic.StoreInt32(&p.waiting, int32(p.waitingQueue.Len()))
 		case <-timeout.C:
 			// Timed out waiting for work to arrive.  Kill a ready worker.
 			if workerCount > 0 {
