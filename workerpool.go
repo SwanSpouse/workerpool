@@ -50,7 +50,7 @@ func New(maxWorkers int) *WorkerPool {
 type WorkerPool struct {
 	maxWorkers   int              // 最大的并发数
 	timeout      time.Duration    // 超时时间 每隔这么长时间去检查一下是否有空闲的worker
-	taskQueue    chan func()      // 任务队列
+	taskQueue    chan func()      // 任务队列 没有缓冲区
 	readyWorkers chan chan func() // 空闲的worker队列
 	stoppedChan  chan struct{}    // workerPool的停止标记
 	waitingQueue deque.Deque      // task的waiting队列 taskQueue中的任务若没有worker来接受，则会跑到这里
@@ -109,6 +109,7 @@ func (p *WorkerPool) Stopped() bool {
 func (p *WorkerPool) Submit(task func()) {
 	// 提交task；这里保证了task不能为空；
 	if task != nil {
+		// 如果taskQueue满了的话会阻塞在这里
 		p.taskQueue <- task
 	}
 }
@@ -120,6 +121,7 @@ func (p *WorkerPool) SubmitWait(task func()) {
 		return
 	}
 	doneChan := make(chan struct{})
+	// 如果taskQueue满了的话会阻塞在这里
 	p.taskQueue <- func() {
 		task()
 		close(doneChan)
@@ -140,10 +142,10 @@ func (p *WorkerPool) dispatch() {
 	defer close(p.stoppedChan)
 	timeout := time.NewTimer(p.timeout) // 创建一个计时器
 	var (
-		workerCount    int
-		task           func()
+		workerCount    int    // 当前的worker数量
+		task           func() // task
 		ok, wait       bool
-		workerTaskChan chan func()
+		workerTaskChan chan func() // worker的task队列
 	)
 	startReady := make(chan chan func())
 Loop: // 记住这里是Loop
@@ -176,18 +178,20 @@ Loop: // 记住这里是Loop
 			atomic.StoreInt32(&p.waiting, int32(p.waitingQueue.Len()))
 			continue
 		}
+		// 如果waitingQueue的Len不为空，则不会走到这里来；因为这里到时间了就开始销毁worker了
 		// 每次在这里重置超时时间
 		timeout.Reset(p.timeout)
 		// 这里两个case之间没有先后顺序的问题；
 		select {
 		// 在这里可以收到task说明有源源不断的任务进来
 		case task, ok = <-p.taskQueue:
+			// 在插入task的时候就已经保证了task不为nil；所以task = nil是一个停止信号
 			if !ok || task == nil {
 				break Loop
 			}
 			// Got a task to do.
 			select {
-			// 有空闲的worker
+			// 从这里接收空闲的worker
 			case workerTaskChan = <-p.readyWorkers:
 				// A worker is ready, so give task to worker.
 				// 把task交给worker来进行处理
@@ -199,6 +203,7 @@ Loop: // 记住这里是Loop
 				if workerCount < p.maxWorkers {
 					// 记录当前worker的数量
 					workerCount++
+					// 每一个worker都对应着一个goroutine
 					go func(t func()) {
 						//  启动worker
 						startWorker(startReady, p.readyWorkers)
@@ -236,10 +241,11 @@ Loop: // 记住这里是Loop
 
 	// If instructed to wait for all queued tasks, then remove from queue and
 	// give to workers until queue is empty.
-	// 能到这里说明taskQueue里面已经没有任务了；说明要么所有的任务都执行完了，要么所有的任务都在执行中。
+	// 能到这里说明taskQueue里面已经没有任务了，任务要么在执行过程中，要么处于waitingQueue中
 	if wait {
 		// 等待所有的任务执行完成
 		// WaitingQueue里面还有task，说明所有的worker都在工作，同时还有任务没有被执行
+		// 在这里要把所有waitingQueue中的任务也执行掉
 		for p.waitingQueue.Len() != 0 {
 			// 看看有没有worker空闲出来
 			workerTaskChan = <-p.readyWorkers
@@ -301,7 +307,7 @@ func startWorker(startReady, readyWorkers chan chan func()) {
 			task()
 
 			// Register availability on readyWorkers channel.
-			// 执行完一个任务之后，把自己重新交还给readyWorkers
+			// 执行完一个任务之后，把自己重新交还给readyWorkers，表示自己可以开始接受新任务
 			readyWorkers <- taskChan
 		}
 	}()
