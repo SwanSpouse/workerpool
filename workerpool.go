@@ -164,6 +164,7 @@ Loop:
 		select {
 		case task, ok = <-p.taskQueue:
 			if !ok || task == nil {
+				wait = task == nil && p.waitingQueue.Len() != 0
 				break Loop
 			}
 			// 来了之后先放入到waitingQueue里面
