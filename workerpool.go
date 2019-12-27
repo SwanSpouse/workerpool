@@ -15,6 +15,7 @@ const (
 
 	// If worker pool receives no new work for this period of time, then stop
 	// a worker goroutine.
+	// 如果这么长时间没有收到任务来执行；则关闭一个worker
 	idleTimeoutSec = 5
 )
 
@@ -147,6 +148,7 @@ func (p *WorkerPool) dispatch() {
 		ok, wait       bool
 		workerTaskChan chan func() // worker的task队列
 	)
+	// 这个是没有缓冲区的；会确保一个worker启动起来
 	startReady := make(chan chan func())
 Loop: // 记住这里是Loop
 	for {
@@ -180,6 +182,7 @@ Loop: // 记住这里是Loop
 		}
 		// 如果waitingQueue的Len不为空，则不会走到这里来；因为这里到时间了就开始销毁worker了
 		// 每次在这里重置超时时间
+		// 这里的timeout记录的是通过多长时间才从 taskQueue中获取到了一个task
 		timeout.Reset(p.timeout)
 		// 这里两个case之间没有先后顺序的问题；
 		select {
@@ -223,7 +226,7 @@ Loop: // 记住这里是Loop
 			}
 		case <-timeout.C:
 			// Timed out waiting for work to arrive.  Kill a ready worker.
-			// 这里有一个计时器，到这里说明，到这里说明已经没有那么多的task可以被执行了。
+			// 这里有一个计时器，到这里说明，到这里说明已经没有那么多的task可以被执行了。开始缩容了。
 			if workerCount > 0 {
 				select {
 				// 如果这时候有空闲的worker，则进行关闭；回收资源
@@ -293,6 +296,7 @@ func startWorker(startReady, readyWorkers chan chan func()) {
 		// Register availability on starReady channel.
 		// 把自己注册出去，让别人可以往taskChan里面提交任务
 		startReady <- taskChan
+		// worker的loop
 		for {
 			// 自己也开始从taskChan里面接受任务
 			// Read task from dispatcher.
@@ -303,11 +307,13 @@ func startWorker(startReady, readyWorkers chan chan func()) {
 				break
 			}
 			// Execute the task.
-			// 在这里执行task TODO @limingji 这里不应该捕获一下panic吗？否则的话panic会导致当前的这个worker xxxx
+			// 在这里执行task
+			// TODO @limingji 这里不应该捕获一下panic吗？否则的话panic会导致当前的这个worker xxxx
 			task()
 
 			// Register availability on readyWorkers channel.
 			// 执行完一个任务之后，把自己重新交还给readyWorkers，表示自己可以开始接受新任务
+			// 这个readyWorkers是有容量限制的；有可能阻塞在这里；
 			readyWorkers <- taskChan
 		}
 	}()
