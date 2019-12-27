@@ -321,7 +321,8 @@ func (p *WorkerPool) stop(wait bool) {
 		// 标记当前的worker已经被关闭了
 		atomic.StoreInt32(&p.stopped, 1)
 		if wait {
-			// 噢噢噢噢；这个比较巧妙；用一个这东西标记最有一个任务
+			// 噢噢噢噢；这个比较巧妙；用一个这东西标记最后一个任务
+			// 而且这个是阻塞队列，nil能写进去了之后说明一定有人接到了这个nil；taskQueue可以关闭了
 			p.taskQueue <- nil
 		}
 		// Close task queue and wait for currently running tasks to finish.
