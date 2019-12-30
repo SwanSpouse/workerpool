@@ -1,6 +1,7 @@
 package workerpool
 
 import (
+	"fmt"
 	"github.com/gammazero/deque"
 	"sync"
 	"sync/atomic"
@@ -138,6 +139,7 @@ func (p *WorkerPool) dispatch() {
 	startReady := make(chan chan func())
 Loop:
 	for {
+		fmt.Printf("current workerCount:%d taskWaiting:%d\n", workerCount, p.waitingQueue.Len())
 		// As long as tasks are in the waiting queue, remove and execute these
 		// tasks as workers become available, and place new incoming tasks on
 		// the queue.  Once the queue is empty, then go back to submitting
@@ -207,6 +209,7 @@ Loop:
 	// give to workers until queue is empty.
 	if wait {
 		for p.waitingQueue.Len() != 0 {
+			fmt.Printf("current workerCount:%d taskWaiting:%d\n", workerCount, p.waitingQueue.Len())
 			workerTaskChan = <-p.readyWorkers
 			// A worker is ready, so give task to worker.
 			workerTaskChan <- p.waitingQueue.PopFront().(func())
