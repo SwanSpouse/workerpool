@@ -1,4 +1,4 @@
-module github.com/gammazero/workerpool
+module github.com/SwanSpouse/workerpool
 
 require github.com/gammazero/deque v0.0.0-20190521012701-46e4ffb7a622
 
